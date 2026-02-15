@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { width: 300px; padding: 15px; font-family: sans-serif; }
+        .status { padding: 10px; border-radius: 5px; text-align: center; color: white; margin-bottom: 10px; }
+        .safe { background-color: #4CAF50; }
+        .suspicious { background-color: #FF9800; }
+        .dangerous { background-color: #F44336; }
+        h3 { margin: 0 0 10px 0; }
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.9em; }
+        .issues { margin-top: 10px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 0.85em; color: #555; }
+    </style>
+</head>
+<body>
+    <div id="status-box" class="status">Scanning...</div>
+    
+    <div class="info-row">
+        <span>Domain:</span>
+        <strong id="domain">...</strong>
+    </div>
+    <div class="info-row">
+        <span>Risk Score:</span>
+        <strong id="score">0/100</strong>
+    </div>
+    <div class="info-row">
+        <span>Domain Age:</span>
+        <span id="age">-- days</span>
+    </div>
+
+    <div id="issues-list" class="issues"></div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <title>PhishGuard - Security Warning</title>
+    <style>
+        body {
+            background-color: #b71c1c; /* dark red */
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        .container {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            border-radius: 10px;
+            max-width: 600px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        h1 { font-size: 3em; margin: 0 0 20px 0; }
+        .icon { font-size: 5em; margin-bottom: 20px; }
+        p { font-size: 1.2em; line-height: 1.6; }
+        .details {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.1em;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.3s;
+        }
+        .btn-safe {
+            background-color: #4CAF50;
+            color: white;
+            font-weight: bold;
+        }
+        .btn-danger {
+            background-color: transparent;
+            border: 2px solid rgba(255,255,255,0.5);
+            color: rgba(255,255,255,0.8);
+        }
+        .btn-danger:hover { background-color: rgba(255,255,255,0.1); color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🚫</div>
+        <h1>Dangerous Website!</h1>
+        <p>PhishGuard has blocked access to this website to protect you.</p>
+        
+        <div class="details" id="reason-box">
+            <strong>Reason:</strong> <span id="reason-text">Loading...</span>
+        </div>
+
+        <div>
+            <button id="proceed" class="btn btn-danger">Ignore Warning and Continue</button>
+        </div>
+    </div>
+    <script src="warning.js"></script>
+</body>
+</html>
