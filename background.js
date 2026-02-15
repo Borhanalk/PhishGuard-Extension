@@ -1,15 +1,22 @@
-// ===================== CONFIG =====================
+// ======================================================
+// ===================== CONFIG =========================
+// ======================================================
+
 const SERVER_URL = "http://localhost:3000/check";
 const BLOCK_THRESHOLD = 70;
 const TEMP_ALLOW_TTL = 5 * 60 * 1000; // 5 minutes
 
 console.log("[PhishGuard] Extension loaded");
 
-// ===================== TEMP ALLOW SYSTEM =====================
+// ======================================================
+// ================= TEMP ALLOW SYSTEM ==================
+// ======================================================
+
 const tempAllowed = new Map();
 
 function allowTemporarily(hostname) {
   tempAllowed.set(hostname, Date.now());
+  console.log("[PhishGuard] Temporarily allowing:", hostname);
 }
 
 function isTemporarilyAllowed(hostname) {
@@ -25,7 +32,10 @@ function isTemporarilyAllowed(hostname) {
   return true;
 }
 
-// ===================== PROTECTED BRANDS =====================
+// ======================================================
+// ================= PROTECTED BRANDS ===================
+// ======================================================
+
 const PROTECTED_BRANDS = [
   "facebook.com",
   "google.com",
@@ -41,7 +51,10 @@ const PROTECTED_BRANDS = [
   "binance.com"
 ];
 
-// ===================== DOMAIN HELPERS =====================
+// ======================================================
+// ================= DOMAIN HELPERS =====================
+// ======================================================
+
 function getBaseDomain(hostname) {
   hostname = hostname.toLowerCase().replace(/^www\./, "");
   const parts = hostname.split(".");
@@ -50,27 +63,29 @@ function getBaseDomain(hostname) {
 
 function levenshtein(a, b) {
   const matrix = [];
+
   for (let i = 0; i <= b.length; i++) matrix[i] = [i];
   for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
 
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
-      if (b[i - 1] === a[j - 1]) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
+      matrix[i][j] =
+        b[i - 1] === a[j - 1]
+          ? matrix[i - 1][j - 1]
+          : Math.min(
+              matrix[i - 1][j - 1] + 1,
+              matrix[i][j - 1] + 1,
+              matrix[i - 1][j] + 1
+            );
     }
   }
+
   return matrix[b.length][a.length];
 }
 
 function detectDomainImpersonation(hostname) {
   hostname = hostname.toLowerCase().replace(/^www\./, "");
+
   const baseDomain = getBaseDomain(hostname);
   const sld = baseDomain.split(".")[0];
 
@@ -78,12 +93,12 @@ function detectDomainImpersonation(hostname) {
     const brandBase = getBaseDomain(brand);
     const brandName = brandBase.split(".")[0];
 
-    // Official domain
+    // Official
     if (baseDomain === brandBase) {
       return { suspicious: false };
     }
 
-    // Contains brand name + extra words
+    // Brand inside domain
     if (sld.includes(brandName) && sld !== brandName) {
       return {
         suspicious: true,
@@ -104,42 +119,43 @@ function detectDomainImpersonation(hostname) {
   return { suspicious: false };
 }
 
-// ===================== HTTPS CHECK =====================
-function checkHttps(tabUrl) {
+// ======================================================
+// ================= HTTPS CHECK ========================
+// ======================================================
+
+function checkHttps(url) {
   try {
-    const u = new URL(tabUrl);
-    return { isHttps: u.protocol === "https:" };
+    return new URL(url).protocol === "https:";
   } catch {
-    return { isHttps: false };
+    return false;
   }
 }
 
-// ===================== SAFE BROWSING VIA SERVER =====================
-async function safeBrowsingCheckViaServer(urlToCheck) {
+// ======================================================
+// ============== SAFE BROWSING VIA SERVER =============
+// ======================================================
+
+async function safeBrowsingCheckViaServer(url) {
   try {
-    const res = await fetch(`${SERVER_URL}?url=${encodeURIComponent(urlToCheck)}`);
-    if (!res.ok) return { ok: false };
+    const res = await fetch(`${SERVER_URL}?url=${encodeURIComponent(url)}`);
+    if (!res.ok) return { blacklisted: false };
 
     const data = await res.json();
-    const score = data?.result?.risk?.score || 0;
-
-    return score === 100
-      ? { ok: true, blacklisted: true }
-      : { ok: true, blacklisted: false };
-
+    return {
+      blacklisted: data?.result?.risk?.score === 100
+    };
   } catch {
     console.warn("[PhishGuard] Safe Browsing server error");
-    return { ok: false };
+    return { blacklisted: false };
   }
 }
 
-// ===================== RISK CALCULATION =====================
+// ======================================================
+// ================= RISK CALCULATION ===================
+// ======================================================
+
 function buildRiskScore({ https, sb, impersonation }) {
 
-  let score = 0;
-  const reasons = [];
-
-  // Google Blacklist (highest priority)
   if (sb?.blacklisted) {
     return {
       score: 100,
@@ -148,27 +164,30 @@ function buildRiskScore({ https, sb, impersonation }) {
     };
   }
 
-  // Impersonation
+  let score = 0;
+  const reasons = [];
+
   if (impersonation?.suspicious) {
     score = 100;
     reasons.push(`🚨 ${impersonation.reason}`);
   }
 
-  // HTTP
-  if (!https?.isHttps) {
+  if (!https) {
     score = 100;
     reasons.push("🔓 Unencrypted connection (HTTP)");
   }
 
-  const verdict =
-    score >= 70 ? "DANGEROUS" :
-    score >= 40 ? "SUSPICIOUS" :
-    "SAFE";
-
-  return { score, verdict, reasons };
+  return {
+    score,
+    verdict: score >= 70 ? "DANGEROUS" : "SAFE",
+    reasons
+  };
 }
 
-// ===================== BLOCK STORAGE =====================
+// ======================================================
+// ================= BLOCK STORAGE ======================
+// ======================================================
+
 async function setBlocked(tabId, payload) {
   await chrome.storage.session.set({ [`blocked:${tabId}`]: payload });
 }
@@ -182,31 +201,25 @@ async function clearBlocked(tabId) {
   await chrome.storage.session.remove(`blocked:${tabId}`);
 }
 
-// ===================== MAIN NAVIGATION LISTENER =====================
+// ======================================================
+// ================= NAVIGATION LISTENER ================
+// ======================================================
+
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
   if (details.frameId !== 0) return;
   if (!details.url.startsWith("http")) return;
   if (details.url.startsWith(chrome.runtime.getURL(""))) return;
 
-  const urlObj = new URL(details.url);
-  const hostname = urlObj.hostname;
+  const hostname = new URL(details.url).hostname;
 
-  // ✅ Temporary Allow Check
-  if (isTemporarilyAllowed(hostname)) {
-    console.log("[PhishGuard] Temporarily allowed:", hostname);
-    return;
-  }
+  if (isTemporarilyAllowed(hostname)) return;
 
   const impersonation = detectDomainImpersonation(hostname);
   const https = checkHttps(details.url);
   const sb = await safeBrowsingCheckViaServer(details.url);
 
-  const risk = buildRiskScore({
-    https,
-    sb,
-    impersonation
-  });
+  const risk = buildRiskScore({ https, sb, impersonation });
 
   if (risk.score >= BLOCK_THRESHOLD) {
 
@@ -216,85 +229,75 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       analysis: { risk }
     });
 
-    const warningUrl = chrome.runtime.getURL(`warning.html?tabId=${details.tabId}`);
-    await chrome.tabs.update(details.tabId, { url: warningUrl });
-  }
+    const warningUrl =
+      chrome.runtime.getURL(`warning.html?tabId=${details.tabId}`);
 
+    try {
+      await chrome.tabs.update(details.tabId, { url: warningUrl });
+    } catch {
+      console.warn("[PhishGuard] Tab closed before blocking");
+    }
+  }
 });
 
-// ===================== MESSAGE HANDLING =====================
+// ======================================================
+// ================= MESSAGE HANDLING ===================
+// ======================================================
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // Popup Info
-  if (msg.type === "GET_SITE_INFO" && msg.url) {
-    (async () => {
-      try {
-        const u = new URL(msg.url);
-        const hostname = u.hostname;
-
-        const impersonation = detectDomainImpersonation(hostname);
-        const https = checkHttps(msg.url);
-        const sb = await safeBrowsingCheckViaServer(msg.url);
-
-        const risk = buildRiskScore({
-          https,
-          sb,
-          impersonation
-        });
-
-        sendResponse({
-          ok: true,
-          result: {
-            url: msg.url,
-            hostname,
-            https,
-            risk
-          }
-        });
-
-      } catch {
-        sendResponse({ ok: false, error: "INVALID_URL" });
-      }
-    })();
-
-    return true;
-  }
-
-  // Warning Page Info
+  // GET BLOCK DATA
   if (msg.type === "GET_BLOCKED_INFO") {
-    getBlocked(msg.tabId).then(data => {
+    getBlocked(msg.tabId).then((data) => {
       sendResponse({ ok: true, data });
     });
     return true;
   }
 
-  // Continue Anyway (Temporary Allow)
+  // CONTINUE
   if (msg.type === "CONTINUE_NAV") {
+
     getBlocked(msg.tabId).then(async (data) => {
-      if (data) {
 
-        const hostname = new URL(data.originalUrl).hostname;
+      if (!data) {
+        sendResponse({ ok: false });
+        return;
+      }
 
-        // ✅ Allow temporarily
-        allowTemporarily(hostname);
+      const originalUrl = data.originalUrl;
+      const hostname = new URL(originalUrl).hostname;
 
-        await clearBlocked(msg.tabId);
-        await chrome.tabs.update(msg.tabId, { url: data.originalUrl });
+      allowTemporarily(hostname);
+      await clearBlocked(msg.tabId);
+
+      try {
+        await chrome.tabs.update(msg.tabId, { url: originalUrl });
+      } catch {
+        console.warn("[PhishGuard] Tab closed before continue");
       }
 
       sendResponse({ ok: true });
+
     });
 
     return true;
   }
 
-  // Cancel Navigation
+  // CANCEL
   if (msg.type === "CANCEL_NAV") {
-    clearBlocked(msg.tabId).then(() => {
-      chrome.tabs.update(msg.tabId, { url: "about:blank" });
+
+    clearBlocked(msg.tabId).then(async () => {
+
+      try {
+        await chrome.tabs.update(msg.tabId, { url: "about:blank" });
+      } catch {
+        console.warn("[PhishGuard] Tab closed before cancel");
+      }
+
       sendResponse({ ok: true });
+
     });
+
     return true;
   }
-
 });
