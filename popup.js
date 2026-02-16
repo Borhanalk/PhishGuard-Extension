@@ -6,7 +6,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const ageEl = document.getElementById("age");
   const issuesList = document.getElementById("issues-list");
 
-  // Get current active tab
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 
     if (!tabs || !tabs[0] || !tabs[0].url) {
@@ -16,7 +15,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const currentUrl = tabs[0].url;
 
-    // Ignore chrome internal pages
     if (currentUrl.startsWith("chrome://")) {
       statusBox.innerText = "Cannot scan this page";
       return;
@@ -32,23 +30,30 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
 
-        if (!res || !res.ok || !res.result) {
+        if (!res || !res.ok) {
           statusBox.innerText = "Scan failed";
           return;
         }
 
-        const data = res.result;
-        const score = data?.risk?.score ?? 0;
-        const verdict = data?.risk?.verdict ?? "SAFE";
+        // ======================
+        // Extract Data
+        // ======================
+
+        const hostname = res.domain ?? "Unknown";
+        const score = res.riskScore ?? 0;
+        const verdict = res.verdict ?? "SAFE";
+        const reasons = res.reasons ?? [];
+        const ageDays = res.age?.ageDays ?? null;
 
         // ======================
         // Update Basic Info
         // ======================
-        domainEl.innerText = data.hostname || "Unknown";
+
+        domainEl.innerText = hostname;
         scoreEl.innerText = score;
 
-        if (data.age?.ageDays != null) {
-          ageEl.innerText = `${data.age.ageDays} days`;
+        if (ageDays !== null) {
+          ageEl.innerText = `${ageDays} days`;
         } else {
           ageEl.innerText = "Unknown";
         }
@@ -56,14 +61,15 @@ document.addEventListener("DOMContentLoaded", () => {
         // ======================
         // Status Color
         // ======================
+
         statusBox.className = "status";
 
         if (verdict === "DANGEROUS") {
-          statusBox.innerText = "Dangerous";
+          statusBox.innerText = "High Risk";
           statusBox.classList.add("dangerous");
         }
-        else if (verdict === "SUSPICIOUS") {
-          statusBox.innerText = "Suspicious";
+        else if (score >= 40) {
+          statusBox.innerText = "Medium Risk";
           statusBox.classList.add("suspicious");
         }
         else {
@@ -72,14 +78,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // ======================
-        // Display Reasons
+        // Reasons
         // ======================
-        if (Array.isArray(data?.risk?.reasons) && data.risk.reasons.length > 0) {
-          issuesList.innerHTML = data.risk.reasons
+
+        if (Array.isArray(reasons) && reasons.length > 0) {
+          issuesList.innerHTML = reasons
             .map(reason => `<div class="issue-item">• ${reason}</div>`)
             .join("");
         } else {
-          issuesList.innerHTML = `<div class="issue-item">No security issues detected</div>`;
+          issuesList.innerHTML =
+            `<div class="issue-item">No security issues detected</div>`;
         }
 
       }

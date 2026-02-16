@@ -3,8 +3,8 @@
 // ======================================================
 
 const SERVER_URL = "http://localhost:3000/check";
-const BLOCK_THRESHOLD = 70;
-const TEMP_ALLOW_TTL = 5 * 60 * 1000; // 5 minutes
+const BLOCK_THRESHOLD = 50;
+const TEMP_ALLOW_TTL = 5 * 60 * 1000;
 
 console.log("[PhishGuard] Extension loaded");
 
@@ -16,7 +16,6 @@ const tempAllowed = new Map();
 
 function allowTemporarily(hostname) {
   tempAllowed.set(hostname, Date.now());
-  console.log("[PhishGuard] Temporarily allowing:", hostname);
 }
 
 function isTemporarilyAllowed(hostname) {
@@ -93,12 +92,10 @@ function detectDomainImpersonation(hostname) {
     const brandBase = getBaseDomain(brand);
     const brandName = brandBase.split(".")[0];
 
-    // Official
     if (baseDomain === brandBase) {
       return { suspicious: false };
     }
 
-    // Brand inside domain
     if (sld.includes(brandName) && sld !== brandName) {
       return {
         suspicious: true,
@@ -106,12 +103,11 @@ function detectDomainImpersonation(hostname) {
       };
     }
 
-    // Typosquatting
     const distance = levenshtein(sld, brandName);
     if (distance > 0 && distance <= 2) {
       return {
         suspicious: true,
-        reason: `Domain is very similar to "${brandName}" (typosquatting)`
+        reason: `Domain very similar to "${brandName}" (typosquatting)`
       };
     }
   }
@@ -132,21 +128,22 @@ function checkHttps(url) {
 }
 
 // ======================================================
-// ============== SAFE BROWSING VIA SERVER =============
+// ================= SAFE BROWSING ======================
 // ======================================================
 
 async function safeBrowsingCheckViaServer(url) {
   try {
     const res = await fetch(`${SERVER_URL}?url=${encodeURIComponent(url)}`);
-    if (!res.ok) return { blacklisted: false };
+    if (!res.ok) return { blacklisted: false, ageDays: null };
 
     const data = await res.json();
+
     return {
-      blacklisted: data?.result?.risk?.score === 100
+      blacklisted: data?.result?.risk?.score === 100,
+      ageDays: data?.result?.age?.ageDays ?? null
     };
   } catch {
-    console.warn("[PhishGuard] Safe Browsing server error");
-    return { blacklisted: false };
+    return { blacklisted: false, ageDays: null };
   }
 }
 
@@ -168,37 +165,25 @@ function buildRiskScore({ https, sb, impersonation }) {
   const reasons = [];
 
   if (impersonation?.suspicious) {
-    score = 100;
+    score += 60;
     reasons.push(`🚨 ${impersonation.reason}`);
   }
 
   if (!https) {
-    score = 100;
+    score += 40;
     reasons.push("🔓 Unencrypted connection (HTTP)");
+  }
+
+  if (sb?.ageDays !== null && sb.ageDays < 30) {
+    score += 40;
+    reasons.push("⚠️ Domain registered recently (< 30 days)");
   }
 
   return {
     score,
-    verdict: score >= 70 ? "DANGEROUS" : "SAFE",
+    verdict: score >= BLOCK_THRESHOLD ? "DANGEROUS" : "SAFE",
     reasons
   };
-}
-
-// ======================================================
-// ================= BLOCK STORAGE ======================
-// ======================================================
-
-async function setBlocked(tabId, payload) {
-  await chrome.storage.session.set({ [`blocked:${tabId}`]: payload });
-}
-
-async function getBlocked(tabId) {
-  const obj = await chrome.storage.session.get(`blocked:${tabId}`);
-  return obj[`blocked:${tabId}`] || null;
-}
-
-async function clearBlocked(tabId) {
-  await chrome.storage.session.remove(`blocked:${tabId}`);
 }
 
 // ======================================================
@@ -209,7 +194,6 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
   if (details.frameId !== 0) return;
   if (!details.url.startsWith("http")) return;
-  if (details.url.startsWith(chrome.runtime.getURL(""))) return;
 
   const hostname = new URL(details.url).hostname;
 
@@ -223,20 +207,12 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
   if (risk.score >= BLOCK_THRESHOLD) {
 
-    await setBlocked(details.tabId, {
-      originalUrl: details.url,
-      hostname,
-      analysis: { risk }
-    });
-
     const warningUrl =
-      chrome.runtime.getURL(`warning.html?tabId=${details.tabId}`);
+      chrome.runtime.getURL(`warning.html?url=${encodeURIComponent(details.url)}`);
 
     try {
       await chrome.tabs.update(details.tabId, { url: warningUrl });
-    } catch {
-      console.warn("[PhishGuard] Tab closed before blocking");
-    }
+    } catch {}
   }
 });
 
@@ -246,57 +222,52 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // GET BLOCK DATA
-  if (msg.type === "GET_BLOCKED_INFO") {
-    getBlocked(msg.tabId).then((data) => {
-      sendResponse({ ok: true, data });
-    });
-    return true;
-  }
+  // 🔥 IGNORE AND CONTINUE HANDLER
+  if (msg.type === "IGNORE_AND_CONTINUE") {
 
-  // CONTINUE
-  if (msg.type === "CONTINUE_NAV") {
-
-    getBlocked(msg.tabId).then(async (data) => {
-
-      if (!data) {
-        sendResponse({ ok: false });
-        return;
-      }
-
-      const originalUrl = data.originalUrl;
+    try {
+      const originalUrl = msg.url;
       const hostname = new URL(originalUrl).hostname;
 
       allowTemporarily(hostname);
-      await clearBlocked(msg.tabId);
 
-      try {
-        await chrome.tabs.update(msg.tabId, { url: originalUrl });
-      } catch {
-        console.warn("[PhishGuard] Tab closed before continue");
-      }
+      chrome.tabs.update(sender.tab.id, { url: originalUrl });
 
-      sendResponse({ ok: true });
+    } catch {}
 
-    });
-
-    return true;
+    return;
   }
 
-  // CANCEL
-  if (msg.type === "CANCEL_NAV") {
+  // SITE INFO HANDLER
+  if (msg.type === "GET_SITE_INFO") {
 
-    clearBlocked(msg.tabId).then(async () => {
-
+    (async () => {
       try {
-        await chrome.tabs.update(msg.tabId, { url: "about:blank" });
+
+        const url = msg.url;
+        const hostname = new URL(url).hostname;
+
+        const impersonation = detectDomainImpersonation(hostname);
+        const https = checkHttps(url);
+        const sb = await safeBrowsingCheckViaServer(url);
+
+        const risk = buildRiskScore({ https, sb, impersonation });
+
+        sendResponse({
+          ok: true,
+          domain: hostname,
+          riskScore: risk.score,
+          verdict: risk.verdict,
+          reasons: risk.reasons,
+          age: {
+            ageDays: sb.ageDays
+          }
+        });
+
       } catch {
-        console.warn("[PhishGuard] Tab closed before cancel");
+        sendResponse({ ok: false });
       }
-
-      sendResponse({ ok: true });
-
-    });
+    })();
 
     return true;
   }

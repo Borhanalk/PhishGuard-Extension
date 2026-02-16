@@ -1,41 +1,29 @@
 document.addEventListener("DOMContentLoaded", () => {
 
-  // ===================== GET TAB ID =====================
-  const urlParams = new URLSearchParams(window.location.search);
-  const tabId = parseInt(urlParams.get("tabId"));
+  const params = new URLSearchParams(window.location.search);
+  const blockedUrl = params.get("url");
 
   const reasonText = document.getElementById("reason-text");
   const proceedBtn = document.getElementById("proceed");
 
-  function showError(message) {
-    reasonText.innerText = message;
+  if (!blockedUrl) {
+    reasonText.innerText = "Blocked URL not found.";
     if (proceedBtn) proceedBtn.disabled = true;
-  }
-
-  // ===================== VALIDATION =====================
-  if (!Number.isInteger(tabId)) {
-    showError("Invalid tab ID.");
     return;
   }
 
-  // ===================== LOAD BLOCK INFO =====================
+  // ===================== LOAD SITE INFO =====================
+
   chrome.runtime.sendMessage(
-    { type: "GET_BLOCKED_INFO", tabId },
+    { type: "GET_SITE_INFO", url: blockedUrl },
     (response) => {
 
-      if (chrome.runtime.lastError) {
-        console.error("[PhishGuard] Runtime error:", chrome.runtime.lastError.message);
-        showError("Error loading block information.");
+      if (chrome.runtime.lastError || !response?.ok) {
+        reasonText.innerText = "Error loading analysis data.";
         return;
       }
 
-      if (!response || !response.ok || !response.data) {
-        showError("Blocking data not found.");
-        return;
-      }
-
-      const analysis = response.data.analysis;
-      const reasons = analysis?.risk?.reasons || [];
+      const reasons = response.reasons || [];
 
       if (reasons.length > 0) {
         reasonText.innerHTML = reasons
@@ -45,11 +33,12 @@ document.addEventListener("DOMContentLoaded", () => {
         reasonText.innerText = "Unknown security risk detected.";
       }
 
-      document.title = `Blocked: ${response.data.hostname}`;
+      document.title = `Blocked: ${response.domain}`;
     }
   );
 
   // ===================== CONTINUE BUTTON =====================
+
   if (proceedBtn) {
     proceedBtn.addEventListener("click", () => {
 
@@ -59,16 +48,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!confirmLeave) return;
 
-      chrome.runtime.sendMessage(
-        { type: "CONTINUE_NAV", tabId },
-        (response) => {
+      chrome.runtime.sendMessage({
+        type: "IGNORE_AND_CONTINUE",
+        url: blockedUrl
+      });
 
-          if (chrome.runtime.lastError) {
-            console.error("[PhishGuard] Continue error:", chrome.runtime.lastError.message);
-            alert("Navigation failed.");
-          }
-        }
-      );
     });
   }
 

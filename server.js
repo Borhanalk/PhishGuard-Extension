@@ -5,6 +5,7 @@ const axios = require("axios");
 const whois = require("whois-json");
 
 const app = express();
+const PORT = 3000;
 
 // ===============================
 // CONFIG
@@ -19,7 +20,23 @@ if (!GOOGLE_API_KEY) {
 console.log("✅ Safe Browsing key loaded");
 
 // ===============================
-// Google Safe Browsing Check
+// Utilities
+// ===============================
+function isValidUrl(url) {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clampScore(score) {
+  return Math.max(0, Math.min(100, score));
+}
+
+// ===============================
+// Google Safe Browsing
 // ===============================
 async function checkGoogleBlacklist(url) {
   try {
@@ -44,38 +61,16 @@ async function checkGoogleBlacklist(url) {
       }
     );
 
-    if (response.data && response.data.matches) {
-      return true;
-    }
-
-    return false;
+    return !!response.data.matches;
 
   } catch (err) {
-
-    if (err.response) {
-      console.error("Safe Browsing API error:", err.response.data);
-    } else {
-      console.error("Safe Browsing error:", err.message);
-    }
-
+    console.warn("Safe Browsing check failed");
     return false;
   }
 }
 
 // ===============================
-// Validate URL
-// ===============================
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ===============================
-// Main Check Endpoint
+// Main Endpoint
 // ===============================
 app.get("/check", async (req, res) => {
 
@@ -99,23 +94,38 @@ app.get("/check", async (req, res) => {
     // 1️⃣ HTTP Risk
     // ===============================
     if (url.startsWith("http://")) {
-      score = 100;
+      score += 60;
       reasons.push("Unencrypted connection (HTTP)");
     }
 
     // ===============================
-    // 2️⃣ Domain Age Check
+    // 2️⃣ Domain Age
     // ===============================
     try {
       const data = await whois(hostname);
 
-      if (data.creationDate) {
-        const creationDate = new Date(data.creationDate);
-        ageDays = (Date.now() - creationDate) / (1000 * 60 * 60 * 24);
+      const creation =
+        data.creationDate ||
+        data.created ||
+        data["Creation Date"] ||
+        null;
 
-        if (ageDays < 180) {
-          score += 40;
-          reasons.push("Domain is newly registered (< 6 months)");
+      if (creation) {
+        const creationDate = new Date(creation);
+        ageDays = Math.floor(
+          (Date.now() - creationDate.getTime()) /
+          (1000 * 60 * 60 * 24)
+        );
+
+        if (!isNaN(ageDays)) {
+          if (ageDays < 30) {
+            score += 60;
+            reasons.push("Domain registered very recently (< 30 days)");
+          }
+          else if (ageDays < 180) {
+            score += 40;
+            reasons.push("Domain registered recently (< 6 months)");
+          }
         }
       }
 
@@ -133,11 +143,13 @@ app.get("/check", async (req, res) => {
       reasons.push("Flagged by Google Safe Browsing");
     }
 
+    score = clampScore(score);
+
     // ===============================
     // Risk Level
     // ===============================
     let level = "Low";
-    if (score >= 70) level = "High";
+    if (score >= 50) level = "High";
     else if (score >= 40) level = "Medium";
 
     res.json({
@@ -145,7 +157,7 @@ app.get("/check", async (req, res) => {
       result: {
         hostname,
         age: {
-          ageDays: ageDays ? Math.floor(ageDays) : null
+          ageDays
         },
         risk: {
           score,
@@ -156,7 +168,6 @@ app.get("/check", async (req, res) => {
     });
 
   } catch (error) {
-
     console.error("Server error:", error.message);
 
     res.status(500).json({
@@ -167,6 +178,6 @@ app.get("/check", async (req, res) => {
 });
 
 // ===============================
-app.listen(3000, () => {
-  console.log("🚀 PhishGuard server running on http://localhost:3000");
+app.listen(PORT, () => {
+  console.log(`🚀 PhishGuard server running on http://localhost:${PORT}`);
 });
